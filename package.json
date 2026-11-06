@@ -1,0 +1,16 @@
+{
+  "name": "frituurfinder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Static directory of Belgian frituren, built from OpenStreetMap data. No dependencies.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "fetch": "node scripts/fetch-osm.mjs",
+    "refresh": "node scripts/fetch-osm.mjs && node scripts/build.mjs",
+    "preview": "npx serve dist -l 3000"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
