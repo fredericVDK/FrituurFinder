@@ -121,6 +121,7 @@ function layout(lang, { title, description, urls, body, jsonLd = [], map = null,
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="google-site-verification" content="tLi76mfyMGptNwBZQAOTs4t3eE1U_KP0OQ6VRB4h84I">
+<meta name="msvalidate.01" content="0A65C5527438A5F5DAAF21361696D819">
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(description)}">
 <link rel="canonical" href="${esc(canonical)}">
@@ -454,6 +455,7 @@ function rootPage(totals) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="google-site-verification" content="tLi76mfyMGptNwBZQAOTs4t3eE1U_KP0OQ6VRB4h84I">
+<meta name="msvalidate.01" content="0A65C5527438A5F5DAAF21361696D819">
 <title>FrituurFinder – Frituren in België · Friteries en Belgique · Belgian fries shops</title>
 <meta name="description" content="${esc(`${totals.shops} frituren in België · ${totals.shops} friteries en Belgique · ${totals.shops} Belgian fries shops.`)}">
 <link rel="canonical" href="${abs('/')}">
