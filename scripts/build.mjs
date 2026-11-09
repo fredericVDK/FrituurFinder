@@ -6,9 +6,9 @@ import { readFile, writeFile, mkdir, rm, cp, access } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LANGS, T } from '../src/i18n.mjs';
-import { PROVINCES, townIdentity } from '../src/geo.mjs';
+import { PROVINCES, townIdentity, provinceFromPostcode, isBrusselsTown } from '../src/geo.mjs';
 import { slugify, esc, jsonInline, nearest, formatKm } from '../src/util.mjs';
-import { hoursLines, schemaOpeningHours } from '../src/hours.mjs';
+import { hoursLines, parseHours, hoursSummary, formatSlots, schemaOpeningSpecs, DAY_NAMES } from '../src/hours.mjs';
 import { DATA_FILE, fetchAndSave } from './fetch-osm.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -47,6 +47,26 @@ function buildModel(shops) {
       towns: new Map(),
       shops: [],
     });
+  }
+
+  // One province per town: shops without a postcode follow the majority of their town
+  // (fixes e.g. Brussels shops ending up in Flemish Brabant). Brussels communes are always Brussels.
+  const votes = new Map();
+  for (const s of shops) {
+    const p = provinceFromPostcode(s.postcode);
+    if (!p) continue;
+    const k = townIdentity(s.city).key;
+    const v = votes.get(k) ?? {};
+    v[p] = (v[p] ?? 0) + 1;
+    votes.set(k, v);
+  }
+  for (const s of shops) {
+    if (isBrusselsTown(s.city)) s.province = 'bru';
+    else if (!provinceFromPostcode(s.postcode)) {
+      const v = votes.get(townIdentity(s.city).key);
+      if (v) s.province = Object.entries(v).sort((a, b) => b[1] - a[1])[0][0];
+    }
+    s.week = parseHours(s.openingHours);
   }
 
   for (const s of shops) {
@@ -155,6 +175,7 @@ ${body}
     <p class="muted">${esc(t.dataNote)}: © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap contributors</a> (ODbL).</p>
   </div>
 </footer>
+<script src="/open-now.js" defer></script>
 ${map ? mapScript(map) : ''}
 </body>
 </html>`;
@@ -192,11 +213,17 @@ const addressLine = (s) =>
     .filter(Boolean)
     .join(', ');
 
+function openBadge(s) {
+  return s.week ? `<span class="open-badge" data-hours="${esc(JSON.stringify(s.week))}" hidden></span>` : '';
+}
+
 function shopCard(lang, s, extra = '') {
   const t = T[lang];
-  const hours = hoursLines(s.openingHours, lang);
+  const summary = hoursSummary(s.week, lang);
+  const hours = summary ? [summary] : hoursLines(s.openingHours, lang);
   return `<li class="card">
   <h3><a href="${esc(u.shop(lang, s))}">${esc(s.name)}</a></h3>
+  ${openBadge(s)}
   <p class="addr">${esc(addressLine(s) || s.town.names[lang])}</p>
   ${hours.length ? `<p class="hours"><span class="label">${esc(t.hours)}:</span> ${hours.map(esc).join(' · ')}</p>` : ''}
   ${extra}
@@ -270,7 +297,8 @@ function homePage(lang, model, totals) {
       '@context': 'https://schema.org',
       '@type': 'WebSite',
       name: BRAND,
-      url: abs(u.home(lang)),
+      alternateName: ['Frituur Finder'],
+      url: abs('/'),
       inLanguage: t.htmlLang,
     },
   ];
@@ -360,7 +388,19 @@ ${crumbs.html}
   };
   return {
     urls,
-    html: layout(lang, { title: t.townTitle(name, n), description: t.townDesc(name, n), urls, body, jsonLd, map }),
+    html: layout(lang, {
+      title: t.townTitle(name, n),
+      description: t.townDesc(
+        name,
+        n,
+        town.shops.slice(0, 3).map((s) => s.name),
+        { name: town.shops[0].name, street: town.shops[0].street, summary: hoursSummary(town.shops[0].week, lang) },
+      ),
+      urls,
+      body,
+      jsonLd,
+      map,
+    }),
   };
 }
 
@@ -369,39 +409,92 @@ function shopPage(lang, s, allShops) {
   const urls = Object.fromEntries(LANGS.map((l) => [l, u.shop(l, s)]));
   const town = s.town;
   const tName = town.names[lang];
+  const pName = town.province.names[lang];
   const addr = addressLine(s);
+  const summary = hoursSummary(s.week, lang);
   const crumbs = breadcrumbs(lang, [
     { name: t.home, url: u.home(lang) },
-    { name: town.province.names[lang], url: u.province(lang, town.province) },
+    { name: pName, url: u.province(lang, town.province) },
     { name: tName, url: u.town(lang, town) },
     { name: s.name, url: u.shop(lang, s) },
   ]);
-  const hours = hoursLines(s.openingHours, lang);
   const facilities = ['takeaway', 'delivery', 'outdoorSeating', 'cards', 'vegetarian', 'wheelchair']
     .filter((k) => s[k] !== undefined && s[k] !== null)
     .map((k) => `<li class="${s[k] ? 'yes' : 'no'}">${s[k] ? '✓' : '✗'} ${esc(t[k])}</li>`);
   const website = s.website && /^https?:\/\//i.test(s.website) ? s.website : s.website ? `https://${s.website}` : null;
-  const nearby = nearest(s, allShops, 6);
+  const sameTown = town.shops.filter((x) => x !== s);
+  const nearby = nearest(s, allShops, 6, (x) => x.town !== town);
+  const closest = nearest(s, allShops, 3);
+
+  // Opening hours: a 7-day table when we can parse them, otherwise the raw lines.
+  let hoursHtml;
+  if (s.week) {
+    hoursHtml = `<table class="week"><tbody>${s.week
+      .map(
+        (slots, d) =>
+          `<tr data-day="${d}"${slots.length ? '' : ' class="closed"'}><th scope="row">${esc(DAY_NAMES[lang][d])}</th><td>${esc(formatSlots(slots, lang))}</td></tr>`,
+      )
+      .join('')}</tbody></table><p class="muted small">${esc(t.hoursNote)}</p>`;
+  } else {
+    const raw = hoursLines(s.openingHours, lang);
+    hoursHtml = raw.length ? raw.map(esc).join('<br>') : `<span class="muted">${esc(t.unknown)}</span>`;
+  }
+
+  // FAQ built only from data we actually have.
+  const f = t.faq;
+  const faq = [];
+  faq.push({ q: f.hoursQ(s.name), a: summary ? f.hoursA(s.name, summary) : f.hoursUnknownA(s.name, s.phone) });
+  if (s.week) {
+    for (const d of [6, 0]) {
+      const day = DAY_NAMES[lang][d];
+      faq.push({
+        q: f.dayQ(s.name, day),
+        a: s.week[d].length ? f.dayYes(s.name, day, formatSlots(s.week[d], lang)) : f.dayNo(s.name, day),
+      });
+    }
+  }
+  faq.push({ q: f.whereQ(s.name), a: f.whereA(s.name, [s.street, s.housenumber].filter(Boolean).join(' '), tName, pName) });
+  if (typeof s.cards === 'boolean') faq.push({ q: f.cardsQ(s.name), a: f.cardsA(s.name, s.cards) });
+  if (typeof s.delivery === 'boolean') faq.push({ q: f.deliveryQ(s.name), a: f.deliveryA(s.name, s.delivery) });
+  if (closest.length)
+    faq.push({
+      q: f.nearQ(s.name),
+      a: f.nearA(closest.map(({ item, km }) => `${item.name} (${formatKm(km, lang)})`)),
+    });
 
   const body = `
 ${crumbs.html}
 <article class="shop">
   <h1>${esc(s.name)}</h1>
+  ${openBadge(s)}
   <p class="lead">${esc(t.shopIntro(s.name, tName))}</p>
   <div class="shop-grid">
     <dl class="facts">
       <dt>${esc(t.address)}</dt>
       <dd>${addr ? esc(addr) : esc(tName)}<br><a href="https://www.google.com/maps/dir/?api=1&amp;destination=${s.lat},${s.lon}" rel="nofollow noopener">${esc(t.route)} →</a></dd>
-      <dt>${esc(t.hours)}</dt>
-      <dd>${hours.length ? hours.map(esc).join('<br>') : `<span class="muted">${esc(t.unknown)}</span>`}</dd>
       ${s.phone ? `<dt>${esc(t.phone)}</dt><dd><a href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}">${esc(s.phone)}</a></dd>` : ''}
       ${website ? `<dt>${esc(t.website)}</dt><dd><a href="${esc(website)}" rel="nofollow noopener">${esc(website.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, ''))}</a></dd>` : ''}
       ${facilities.length ? `<dt>${esc(t.facilities)}</dt><dd><ul class="facilities">${facilities.join('')}</ul></dd>` : ''}
+      <dt>${esc(t.hoursWeek)}</dt>
+      <dd>${hoursHtml}</dd>
     </dl>
     <div id="map" class="map map-small" role="img" aria-label="${esc(s.name)}"></div>
   </div>
   <p class="muted small"><a href="https://www.openstreetmap.org/${esc(s.id)}" rel="nofollow noopener">${esc(t.improve)}</a></p>
 </article>
+<section class="faq">
+  <h2>${esc(t.faqTitle(s.name))}</h2>
+  ${faq.map(({ q, a }) => `<h3>${esc(q)}</h3>\n  <p>${esc(a)}</p>`).join('\n  ')}
+</section>
+${
+  sameTown.length
+    ? `<section>
+  <h2>${esc(t.sameTown(tName))}</h2>
+  <ul class="cards">${sameTown.slice(0, 12).map((x) => shopCard(lang, x)).join('')}</ul>
+  ${sameTown.length > 12 ? `<p><a href="${esc(u.town(lang, town))}">${esc(t.viewAll)} – ${esc(tName)} →</a></p>` : ''}
+</section>`
+    : ''
+}
 <section>
   <h2>${esc(t.nearbyShops)}</h2>
   <ul class="cards">${nearby
@@ -422,25 +515,32 @@ ${crumbs.html}
       streetAddress: [s.street, s.housenumber].filter(Boolean).join(' ') || undefined,
       postalCode: s.postcode || undefined,
       addressLocality: s.city,
-      addressRegion: town.province.names[lang],
+      addressRegion: pName,
       addressCountry: 'BE',
     },
     geo: { '@type': 'GeoCoordinates', latitude: s.lat, longitude: s.lon },
     telephone: s.phone || undefined,
     sameAs: [website, s.facebook].filter(Boolean),
-    openingHours: schemaOpeningHours(s.openingHours),
+    openingHoursSpecification: schemaOpeningSpecs(s.week),
+    paymentAccepted: s.cards === true ? 'Cash, Credit Card' : undefined,
   };
   if (!ld.sameAs.length) delete ld.sameAs;
+  const faqLd = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faq.map(({ q, a }) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })),
+  };
 
+  const hasTown = slugify(s.name).includes(slugify(tName));
   const map = { center: [s.lat, s.lon], zoom: 16, markers: [{ lat: s.lat, lon: s.lon, name: s.name }] };
   return {
     urls,
     html: layout(lang, {
-      title: t.shopTitle(s.name, tName),
-      description: t.shopDesc(s.name, tName, addr),
+      title: t.shopTitle(s.name, tName, hasTown),
+      description: t.shopDesc({ name: s.name, addr: addr || tName, summary, phone: s.phone }),
       urls,
       body,
-      jsonLd: [crumbs.ld, ld],
+      jsonLd: [crumbs.ld, ld, faqLd],
       map,
     }),
   };
@@ -461,8 +561,19 @@ function rootPage(totals) {
 <link rel="canonical" href="${abs('/')}">
 ${LANGS.map((l) => `<link rel="alternate" hreflang="${T[l].htmlLang}" href="${abs(urls[l])}">`).join('\n')}
 <link rel="alternate" hreflang="x-default" href="${abs('/')}">
+<meta property="og:site_name" content="${BRAND}">
+<meta property="og:title" content="${BRAND}">
+<meta name="application-name" content="${BRAND}">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/styles.css">
+<script type="application/ld+json">${jsonInline({
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: BRAND,
+  alternateName: ['Frituur Finder'],
+  url: abs('/'),
+  inLanguage: LANGS.map((l) => T[l].htmlLang),
+})}</script>
 </head>
 <body class="root">
 <main class="wrap root-main">

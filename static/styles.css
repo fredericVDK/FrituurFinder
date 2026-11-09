@@ -95,3 +95,20 @@ h3 { font-size: 1.1rem; margin: 0 0 .3em; }
 .root-main { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; }
 .lang-grid { margin-top: 10px; }
 .leaflet-container a { color: var(--accent-ink); }
+
+/* open-now badge, weekly hours, FAQ */
+.open-badge { display: inline-block; margin: 2px 0 6px; padding: 3px 10px; border-radius: 999px; font-size: .85rem; font-weight: 700; }
+.open-badge.is-open { background: #e3f3e6; color: #22662f; }
+.open-badge.is-closed { background: #f7e3e3; color: #9b2a2a; }
+@media (prefers-color-scheme: dark) {
+  .open-badge.is-open { background: #1f3a25; color: #8fdc9f; }
+  .open-badge.is-closed { background: #3d2020; color: #ff9c9c; }
+}
+.card .open-badge { margin: 0 0 4px; font-size: .78rem; }
+.week { border-collapse: collapse; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.week th { text-align: left; font-weight: 400; padding: 2px 16px 2px 0; text-transform: capitalize; }
+.week td { padding: 2px 0; }
+.week tr.closed td { color: var(--muted); }
+.week tr.today th, .week tr.today td { font-weight: 700; }
+.faq h3 { margin: 1.1em 0 .2em; font-size: 1.02rem; }
+.faq p { margin: 0; max-width: 65ch; }

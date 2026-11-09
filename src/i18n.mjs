@@ -1,3 +1,5 @@
+import { X } from './i18n-extra.mjs';
+
 export const LANGS = ['nl', 'fr', 'en'];
 
 const plural = (n, one, many) => (n === 1 ? one : many);
@@ -190,3 +192,5 @@ export const T = {
     viewAll: 'See all fries shops',
   },
 };
+
+for (const l of LANGS) Object.assign(T[l], X[l]);

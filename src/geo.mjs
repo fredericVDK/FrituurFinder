@@ -108,3 +108,13 @@ export function townIdentity(name) {
   if (known) return { key: norm(known.nl), names: { nl: known.nl, fr: known.fr, en: known.en } };
   return { key: norm(name), names: { nl: name, fr: name, en: name } };
 }
+
+// The 19 Brussels municipalities (+ the city itself): always Brussels-Capital, whatever the data says.
+const BRUSSELS = new Set(
+  ['Brussel', 'Elsene', 'Sint-Gillis', 'Schaarbeek', 'Sint-Jans-Molenbeek', 'Ukkel', 'Vorst', 'Oudergem',
+   'Watermaal-Bosvoorde', 'Sint-Lambrechts-Woluwe', 'Sint-Pieters-Woluwe', 'Sint-Joost-ten-Node',
+   'Sint-Agatha-Berchem', 'Anderlecht', 'Etterbeek', 'Evere', 'Ganshoren', 'Jette', 'Koekelberg',
+   'Laken', 'Laeken', 'Neder-Over-Heembeek', 'Haren']
+    .map((n) => townIdentity(n).key),
+);
+export const isBrusselsTown = (name) => BRUSSELS.has(townIdentity(name).key);
